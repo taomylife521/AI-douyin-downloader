@@ -1,6 +1,17 @@
 import asyncio
 import pytest
+from httpx import ASGITransport, AsyncClient
+
+from config import ConfigLoader
 from server.jobs import DownloadJob, JobManager, JobStatus
+
+
+async def _build_test_app(tmp_path):
+    from server.app import build_app
+    config = ConfigLoader(None)
+    config.update(path=str(tmp_path), cookies={})
+    app = build_app(config)
+    return app
 
 
 @pytest.mark.asyncio
@@ -97,3 +108,109 @@ async def test_legacy_executor_without_kwargs_still_works():
     assert job2 is not None
     assert job2.status == JobStatus.SUCCESS
     assert job2.total == 2
+
+
+# ------------------------- HTTP endpoint tests -------------------------
+
+
+@pytest.mark.asyncio
+async def test_health(tmp_path):
+    app = await _build_test_app(tmp_path)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as c:
+        r = await c.get("/api/v1/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_cookies_status_logged_out_initially(tmp_path):
+    app = await _build_test_app(tmp_path)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as c:
+        r = await c.get("/api/v1/cookies/status")
+        assert r.status_code == 200
+        assert r.json()["logged_in"] is False
+
+
+@pytest.mark.asyncio
+async def test_set_cookies_flips_status(tmp_path, monkeypatch):
+    # Keep cookie file writes confined to tmp_path
+    monkeypatch.chdir(tmp_path)
+    app = await _build_test_app(tmp_path)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as c:
+        r = await c.post(
+            "/api/v1/cookies",
+            json={
+                "cookies": {
+                    "sessionid_ss": "aaa",
+                    "ttwid": "bbb",
+                    "passport_csrf_token": "ccc",
+                }
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+        s = await c.get("/api/v1/cookies/status")
+        assert s.status_code == 200
+        assert s.json()["logged_in"] is True
+
+
+@pytest.mark.asyncio
+async def test_history_empty(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    app = await _build_test_app(tmp_path)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as c:
+        r = await c.get("/api/v1/history")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 0
+        assert body["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_settings_roundtrip(tmp_path):
+    app = await _build_test_app(tmp_path)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as c:
+        r = await c.get("/api/v1/settings")
+        assert r.status_code == 200
+        body = r.json()
+        assert "path" in body and "thread" in body and "rate_limit" in body
+
+        r2 = await c.post(
+            "/api/v1/settings", json={"thread": 7, "rate_limit": 1.5}
+        )
+        assert r2.status_code == 200
+
+        r3 = await c.get("/api/v1/settings")
+        assert r3.json()["thread"] == 7
+        assert r3.json()["rate_limit"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_cancel_nonexistent_returns_404(tmp_path):
+    app = await _build_test_app(tmp_path)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as c:
+        r = await c.post("/api/v1/jobs/nope/cancel")
+        assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_events_nonexistent_returns_404(tmp_path):
+    app = await _build_test_app(tmp_path)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as c:
+        r = await c.get("/api/v1/jobs/nope/events")
+        assert r.status_code == 404

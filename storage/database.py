@@ -136,6 +136,67 @@ class Database:
         ))
         await db.commit()
 
+    async def get_aweme_history(
+        self,
+        *,
+        page: int = 1,
+        size: int = 50,
+        author: Optional[str] = None,
+        date_from: Optional[int] = None,
+        date_to: Optional[int] = None,
+        aweme_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Paginated aweme history, newest download first.
+
+        `date_from` / `date_to` are unix-seconds (filter against `create_time`).
+        `aweme_type` matches the `aweme_type` column (e.g. 'video', 'note').
+        """
+        db = await self._get_conn()
+        where: list = []
+        params: list = []
+        if author:
+            where.append("author_name = ?")
+            params.append(author)
+        if date_from is not None:
+            where.append("create_time >= ?")
+            params.append(int(date_from))
+        if date_to is not None:
+            where.append("create_time <= ?")
+            params.append(int(date_to))
+        if aweme_type:
+            where.append("aweme_type = ?")
+            params.append(aweme_type)
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+        cursor = await db.execute(
+            f"SELECT COUNT(*) FROM aweme {where_sql}", params
+        )
+        row = await cursor.fetchone()
+        total = int(row[0]) if row else 0
+
+        offset = max(0, (page - 1) * size)
+        cursor = await db.execute(
+            f"SELECT aweme_id, aweme_type, title, author_id, author_name, "
+            f"create_time, download_time, file_path FROM aweme {where_sql} "
+            f"ORDER BY download_time DESC, id DESC LIMIT ? OFFSET ?",
+            params + [int(size), int(offset)],
+        )
+        rows = await cursor.fetchall()
+        items = [
+            {
+                "aweme_id": r[0],
+                "aweme_type": r[1],
+                "title": r[2],
+                "author_id": r[3],
+                "author_name": r[4],
+                "create_time": r[5],
+                "download_time": r[6],
+                "file_path": r[7],
+            }
+            for r in rows
+        ]
+        return {"total": total, "page": int(page), "size": int(size), "items": items}
+
     async def get_aweme_count_by_author(self, author_id: str) -> int:
         db = await self._get_conn()
         cursor = await db.execute(
