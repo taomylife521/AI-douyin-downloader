@@ -129,7 +129,8 @@ async def download_url(
 
 
 async def main_async(args):
-    display.show_banner()
+    if not args.serve:
+        display.show_banner()
 
     if args.config:
         config_path = args.config
@@ -271,20 +272,24 @@ async def _run_discovery_subcommand(args, config: ConfigLoader) -> None:
 
 
 async def _run_serve_subcommand(args, config: ConfigLoader) -> None:
-    """启动 REST API 服务模式（fastapi + uvicorn 为可选依赖）。"""
+    """启动 REST API 服务模式（fastapi + uvicorn 为可选依赖）。
+
+    输出一行 `DOUYIN_SIDECAR_READY port=<int> pid=<int>` 到 stdout，
+    由父进程（Electron Main）读取用于确定实际端口；其余日志写 stderr。
+    """
     try:
-        from server.app import run_server
+        from server.app import run_server_and_announce
     except ImportError as exc:
-        display.print_error(
+        print(
             f"REST 服务模式需要安装可选依赖 fastapi + uvicorn："
-            f"\n  pip install fastapi uvicorn\n原始错误：{exc}"
+            f"\n  pip install fastapi uvicorn\n原始错误：{exc}",
+            file=sys.stderr,
         )
         return
 
-    display.print_info(
-        f"启动 REST 服务：http://{args.serve_host}:{args.serve_port}"
+    await run_server_and_announce(
+        config, host=args.serve_host, port=args.serve_port
     )
-    await run_server(config, host=args.serve_host, port=args.serve_port)
 
 
 async def _dispatch_notifications(
