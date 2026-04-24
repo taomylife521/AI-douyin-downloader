@@ -1,0 +1,54 @@
+appId: com.jiji262.douyin-downloader
+productName: 抖音下载器
+copyright: Copyright © 2026 jiji262
+asar: true
+directories:
+  output: dist-installer
+  buildResources: resources
+
+files:
+  - from: dist
+    to: dist
+    filter: ["**/*"]
+  - from: dist-electron
+    to: dist-electron
+    filter: ["**/*"]
+  - package.json
+
+extraResources:
+  - from: resources/sidecar
+    to: sidecar
+    filter: ["**/*"]
+
+mac:
+  category: public.app-category.utilities
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  # Flip to true once APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID are configured.
+  notarize: false
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # Enable once CSC_LINK / CSC_KEY_PASSWORD are configured.
+  signAndEditExecutable: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+publish:
+  provider: github
+  owner: jiji262
+  repo: douyin-downloader
+  releaseType: release
