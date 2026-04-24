@@ -1,10 +1,16 @@
-let baseUrl: string | null = null
+let basePromise: Promise<string> | null = null
 
-export async function getBaseUrl(): Promise<string> {
-  if (baseUrl) return baseUrl
-  const info = await window.api.getSidecarInfo()
-  baseUrl = `http://127.0.0.1:${info.port}`
-  return baseUrl
+export function getBaseUrl(): Promise<string> {
+  if (basePromise) return basePromise
+  basePromise = (async () => {
+    const info = await window.api.getSidecarInfo()
+    return `http://127.0.0.1:${info.port}`
+  })().catch((err) => {
+    // Reset so the next caller can retry after a transient failure.
+    basePromise = null
+    throw err
+  })
+  return basePromise
 }
 
 async function request<T>(pathname: string, init?: RequestInit): Promise<T> {
@@ -93,6 +99,8 @@ export const api = {
     size?: number
     author?: string
     aweme_type?: string
+    date_from?: number
+    date_to?: number
   }) => {
     const qs = new URLSearchParams()
     for (const [k, v] of Object.entries(params)) {

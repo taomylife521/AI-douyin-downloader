@@ -48,6 +48,8 @@ function runPythonFallback(): ChildProcess {
   })
 }
 
+const STDOUT_MAX_BUF = 64 * 1024
+
 export async function startSidecar(): Promise<SidecarInfo> {
   if (info) return info
 
@@ -56,7 +58,10 @@ export async function startSidecar(): Promise<SidecarInfo> {
     process.env.DOUYIN_USE_PY === '1' ||
     (!app.isPackaged && !fs.existsSync(bin))
 
-  child = usePython ? runPythonFallback() : spawn(bin, ['--serve', '--serve-port', '0'], {})
+  const spawnOpts = { windowsHide: true }
+  child = usePython
+    ? runPythonFallback()
+    : spawn(bin, ['--serve', '--serve-port', '0'], spawnOpts)
 
   child.stderr?.on('data', (buf: Buffer) => {
     const lines = buf.toString('utf8').split('\n').filter(Boolean)
@@ -82,6 +87,10 @@ export async function startSidecar(): Promise<SidecarInfo> {
     let buf = ''
     child!.stdout?.on('data', (chunk: Buffer) => {
       buf += chunk.toString('utf8')
+      // Cap buffer: a misbehaving binary could flood stdout without newlines.
+      if (buf.length > STDOUT_MAX_BUF) {
+        buf = buf.slice(buf.length - STDOUT_MAX_BUF)
+      }
       let idx: number
       while ((idx = buf.indexOf('\n')) !== -1) {
         const line = buf.slice(0, idx).trim()
@@ -112,18 +121,28 @@ export async function stopSidecar(): Promise<void> {
   child = null
   info = null
   c.removeAllListeners()
-  try {
-    c.kill('SIGTERM')
-    const t = setTimeout(() => c.kill('SIGKILL'), 3000)
-    await new Promise<void>((r) =>
-      c.once('exit', () => {
-        clearTimeout(t)
-        r()
-      }),
-    )
-  } catch {
-    /* already exited */
-  }
+  // Already exited?
+  if (c.exitCode !== null || c.signalCode !== null) return
+  await new Promise<void>((resolve) => {
+    const t = setTimeout(() => {
+      try {
+        c.kill('SIGKILL')
+      } catch {
+        /* noop */
+      }
+    }, 3000)
+    c.once('exit', () => {
+      clearTimeout(t)
+      resolve()
+    })
+    try {
+      c.kill('SIGTERM')
+    } catch {
+      // Process had already gone away between our check and the kill call.
+      clearTimeout(t)
+      resolve()
+    }
+  })
 }
 
 export function getSidecarInfo(): SidecarInfo {

@@ -21,6 +21,8 @@ export type JobEvent =
         file_paths: string[]
       }
     }
+  // `type` is reserved for future use (e.g., 'auth-required', 'rate-limited').
+  // MVP backend doesn't emit it.
   | { event: 'log'; data: { level: string; message: string; type?: string } }
   | {
       event: 'done'
@@ -53,5 +55,12 @@ export async function subscribeJobEvents(
       }
     })
   }
+  // MVP: don't rely on the native auto-reconnect — when the server sends
+  // `_eof` the stream ends, readyState goes to CLOSED, but an error in
+  // between (e.g., network blip) should NOT spawn ghost reconnects.
+  es.addEventListener('error', () => {
+    if (es.readyState === EventSource.CLOSED) return
+    es.close()
+  })
   return () => es.close()
 }

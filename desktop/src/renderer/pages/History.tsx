@@ -56,8 +56,7 @@ export default function History() {
         >
           <option value="">全部类型</option>
           <option value="video">视频</option>
-          <option value="note">图文</option>
-          <option value="mix">合集</option>
+          <option value="gallery">图文</option>
           <option value="music">音乐</option>
         </select>
       </div>

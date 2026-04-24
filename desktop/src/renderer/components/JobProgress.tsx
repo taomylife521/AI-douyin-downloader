@@ -18,8 +18,10 @@ export default function JobProgress({ jobId, onDone }: Props) {
   const [cancelled, setCancelled] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
     let unsub: (() => void) | null = null
     subscribeJobEvents(jobId, (e) => {
+      if (cancelled) return
       setEvents((prev) => [...prev.slice(-199), e])
       if (e.event === 'done') {
         setTotals(e.data)
@@ -27,10 +29,14 @@ export default function JobProgress({ jobId, onDone }: Props) {
       }
     })
       .then((u) => {
-        unsub = u
+        if (cancelled) u()
+        else unsub = u
       })
-      .catch((err) => console.error('subscribe failed', err))
+      .catch((err) => {
+        if (!cancelled) console.error('subscribe failed', err)
+      })
     return () => {
+      cancelled = true
       unsub?.()
     }
   }, [jobId, onDone])

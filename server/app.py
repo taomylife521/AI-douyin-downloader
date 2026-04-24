@@ -91,12 +91,14 @@ async def _execute_download(
     *,
     reporter: Any = None,
     overrides: Optional[Dict[str, Any]] = None,
+    database: Optional[Database] = None,
 ) -> Dict[str, int]:
     """简化版 download_url：只负责执行并返回成功/失败计数。
 
     有意不复用 cli.main.download_url —— 后者绑定了 progress_display 的 rich 状态。
     API client 仍按请求创建（aiohttp session 不跨请求复用）；其余重量级依赖从
-    _ServerDeps 共享。
+    _ServerDeps 共享。database 在 server 场景由调用方注入，保证 GUI 历史页面能读到
+    本进程下载的内容。
     """
     snap: Dict[str, Any] = {}
     if overrides:
@@ -127,7 +129,7 @@ async def _execute_download(
                 api_client,
                 deps.file_manager,
                 deps.cookie_manager,
-                None,  # database 不在 server 场景里启用，避免单例冲突
+                database,
                 deps.rate_limiter,
                 deps.retry_handler,
                 deps.queue_manager,
@@ -154,14 +156,33 @@ async def _execute_download(
 def build_app(config: ConfigLoader) -> FastAPI:
     deps = _ServerDeps(config)
 
+    # Lazy shared Database instance for BOTH history queries and the downloader
+    # factory (so `/api/v1/history` surfaces items downloaded through the GUI).
+    history_db_lock = asyncio.Lock()
+
+    async def get_shared_db(app: FastAPI) -> Database:
+        if getattr(app.state, "history_db", None) is not None:
+            return app.state.history_db
+        async with history_db_lock:
+            if app.state.history_db is None:
+                db_path = (
+                    config.get("database_path", "dy_downloader.db")
+                    or "dy_downloader.db"
+                )
+                db = Database(db_path=str(db_path))
+                await db.initialize()
+                app.state.history_db = db
+        return app.state.history_db
+
     async def executor(
         url: str,
         *,
         reporter: Any = None,
         overrides: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, int]:
+        db = await get_shared_db(app)
         return await _execute_download(
-            url, deps, reporter=reporter, overrides=overrides
+            url, deps, reporter=reporter, overrides=overrides, database=db
         )
 
     server_cfg = config.get("server") or {}
@@ -262,8 +283,8 @@ def build_app(config: ConfigLoader) -> FastAPI:
 
     @app.post("/api/v1/cookies")
     async def set_cookies(payload: CookiesPayload) -> Dict[str, Any]:
+        # set_cookies internally persists to disk (see auth/cookie_manager.py).
         deps.cookie_manager.set_cookies(payload.cookies)
-        deps.cookie_manager._save_cookies()
         return {"ok": True}
 
     @app.get("/api/v1/cookies/status")
@@ -272,17 +293,6 @@ def build_app(config: ConfigLoader) -> FastAPI:
         required = ("sessionid_ss", "ttwid", "passport_csrf_token")
         logged_in = all(cookies.get(k) for k in required)
         return {"logged_in": bool(logged_in)}
-
-    async def _get_history_db() -> Database:
-        if app.state.history_db is None:
-            db_path = (
-                config.get("database_path", "dy_downloader.db")
-                or "dy_downloader.db"
-            )
-            db = Database(db_path=str(db_path))
-            await db.initialize()
-            app.state.history_db = db
-        return app.state.history_db
 
     @app.get("/api/v1/history")
     async def history(
@@ -293,7 +303,7 @@ def build_app(config: ConfigLoader) -> FastAPI:
         date_to: Optional[int] = None,
         aweme_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        db = await _get_history_db()
+        db = await get_shared_db(app)
         return await db.get_aweme_history(
             page=page,
             size=size,

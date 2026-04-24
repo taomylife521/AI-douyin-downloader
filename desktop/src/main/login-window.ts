@@ -74,18 +74,23 @@ export async function openLoginWindow(
   await win.loadURL(DOUYIN_URL)
 
   let captured = false
-  const listener = async () => {
-    if (captured) return
-    const cookies = await collectCookies(sess)
-    if (!hasRequiredCookies(cookies)) return
-    captured = true
-    try {
-      await postCookiesToSidecar(cookies)
-      onCookiesReady()
-    } catch (err) {
-      console.error('post cookies failed', err)
-    }
-    if (!win.isDestroyed()) win.close()
+  let inFlight: Promise<void> | null = null
+  const listener = (): void => {
+    if (captured || inFlight) return
+    inFlight = (async () => {
+      const cookies = await collectCookies(sess)
+      if (captured || !hasRequiredCookies(cookies)) return
+      captured = true
+      try {
+        await postCookiesToSidecar(cookies)
+        onCookiesReady()
+      } catch (err) {
+        console.error('post cookies failed', err)
+      }
+      if (!win.isDestroyed()) win.close()
+    })().finally(() => {
+      inFlight = null
+    })
   }
   sess.cookies.on('changed', listener)
 
