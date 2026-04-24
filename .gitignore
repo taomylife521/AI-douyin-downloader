@@ -50,3 +50,11 @@ config/cookies.json
 .idea/
 .vscode/
 .omc/
+
+# Desktop (Electron)
+desktop/node_modules/
+desktop/dist/
+desktop/dist-electron/
+desktop/dist-installer/
+desktop/resources/sidecar/
+desktop/.pyinstaller-build/
