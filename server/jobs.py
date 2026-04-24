@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 import uuid
 from datetime import datetime, timezone
@@ -13,7 +14,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 
 def _now_iso() -> str:
-    # 统一使用 timezone-aware UTC ISO-8601 字符串
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -22,8 +22,10 @@ class JobStatus:
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
 
-    TERMINAL = frozenset({SUCCESS, FAILED})
+    TERMINAL = frozenset({SUCCESS, FAILED, CANCELLED})
 
 
 class DownloadJob:
@@ -34,7 +36,6 @@ class DownloadJob:
         self.created_at = _now_iso()
         self.started_at: Optional[str] = None
         self.finished_at: Optional[str] = None
-        # 单调时钟时间戳，用于 TTL / LRU 剪裁（不受系统时钟跳变影响）
         self.finished_monotonic: Optional[float] = None
         self.total = 0
         self.success = 0
@@ -42,6 +43,8 @@ class DownloadJob:
         self.skipped = 0
         self.error: Optional[str] = None
         self._task: Optional[asyncio.Task] = None
+        self.events: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        self.overrides: Dict[str, Any] = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -59,6 +62,14 @@ class DownloadJob:
         }
 
 
+def _executor_accepts(func: Callable[..., Any], name: str) -> bool:
+    try:
+        sig = inspect.signature(func)
+        return name in sig.parameters
+    except (TypeError, ValueError):
+        return False
+
+
 class JobManager:
     """内存 job 存储 + 并发执行器，带 TTL + 容量上限。
 
@@ -73,11 +84,11 @@ class JobManager:
     """
 
     DEFAULT_MAX_JOBS = 500
-    DEFAULT_JOB_TTL_SECONDS = 24 * 3600  # 24 小时
+    DEFAULT_JOB_TTL_SECONDS = 24 * 3600
 
     def __init__(
         self,
-        executor: Callable[[str], Awaitable[Dict[str, int]]],
+        executor: Callable[..., Awaitable[Dict[str, int]]],
         *,
         max_concurrency: int = 2,
         max_jobs: int = DEFAULT_MAX_JOBS,
@@ -90,21 +101,21 @@ class JobManager:
         self.max_jobs = max(1, int(max_jobs))
         self.job_ttl_seconds = max(0.0, float(job_ttl_seconds))
 
-    async def submit(self, url: str) -> DownloadJob:
+    async def submit(
+        self, url: str, *, overrides: Optional[Dict[str, Any]] = None
+    ) -> DownloadJob:
         job_id = uuid.uuid4().hex[:12]
         job = DownloadJob(job_id=job_id, url=url)
+        job.overrides = overrides or {}
         async with self._lock:
             self._prune_locked()
             self._jobs[job_id] = job
-        # 异步调度，立即返回 job 给调用方
         job._task = asyncio.create_task(self._run(job))
         return job
 
     def _prune_locked(self) -> None:
-        """持锁内调用：按 TTL + 容量上限剪裁终态 job。"""
         now = time.monotonic()
 
-        # 1) TTL
         if self.job_ttl_seconds > 0:
             expired_ids = [
                 jid
@@ -116,7 +127,6 @@ class JobManager:
             for jid in expired_ids:
                 self._jobs.pop(jid, None)
 
-        # 2) 容量上限：只淘汰终态 job，保留 in-flight
         if len(self._jobs) < self.max_jobs:
             return
         terminal_jobs = [
@@ -125,30 +135,60 @@ class JobManager:
             if j.status in JobStatus.TERMINAL
         ]
         terminal_jobs.sort(key=lambda pair: pair[0])
-        overflow = len(self._jobs) - self.max_jobs + 1  # +1 是为新 job 腾位
+        overflow = len(self._jobs) - self.max_jobs + 1
         for _, jid in terminal_jobs[:overflow]:
             self._jobs.pop(jid, None)
 
     async def _run(self, job: DownloadJob) -> None:
+        from control.progress_reporter import QueueProgressReporter
+
         async with self._semaphore:
             job.status = JobStatus.RUNNING
             job.started_at = _now_iso()
+            reporter = QueueProgressReporter(job.events)
             try:
-                counts = await self.executor(job.url)
+                kwargs: Dict[str, Any] = {}
+                if _executor_accepts(self.executor, "reporter"):
+                    kwargs["reporter"] = reporter
+                if _executor_accepts(self.executor, "overrides"):
+                    kwargs["overrides"] = job.overrides
+                counts = await self.executor(job.url, **kwargs)
+            except asyncio.CancelledError:
+                job.status = JobStatus.CANCELLED
+                job.error = job.error or "cancelled"
+                raise
+            except Exception as exc:
+                job.status = JobStatus.FAILED
+                job.error = f"{type(exc).__name__}: {exc}"
+            else:
                 job.total = int(counts.get("total", 0))
                 job.success = int(counts.get("success", 0))
                 job.failed = int(counts.get("failed", 0))
                 job.skipped = int(counts.get("skipped", 0))
-                # 只要跑完就是 success；具体成功/失败个数通过字段区分
                 job.status = (
                     JobStatus.SUCCESS if job.failed == 0 else JobStatus.FAILED
                 )
-            except Exception as exc:
-                job.status = JobStatus.FAILED
-                job.error = f"{type(exc).__name__}: {exc}"
             finally:
                 job.finished_at = _now_iso()
                 job.finished_monotonic = time.monotonic()
+                # Signal end-of-stream to any SSE consumer
+                try:
+                    job.events.put_nowait({"event": "_eof", "data": {}})
+                except asyncio.QueueFull:
+                    pass
+
+    async def cancel(self, job_id: str) -> bool:
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job.status in JobStatus.TERMINAL:
+                return False
+            job.status = JobStatus.CANCELLING
+            task = job._task
+        if task is not None and not task.done():
+            task.cancel()
+        return True
 
     async def get(self, job_id: str) -> Optional[DownloadJob]:
         async with self._lock:
