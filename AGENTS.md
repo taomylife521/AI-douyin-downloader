@@ -30,6 +30,8 @@ A Python-based Douyin (TikTok China) batch downloader that fetches videos, galle
 | `tests/` | Pytest test suite with 23 test modules (see `tests/AGENTS.md`) |
 | `tools/` | Standalone utilities like browser-based cookie fetching (see `tools/AGENTS.md`) |
 | `utils/` | Shared helpers — logging, validation, anti-bot signatures (see `utils/AGENTS.md`) |
+| `server/` | Optional FastAPI REST service (enabled with `--serve`); also the sidecar boundary consumed by `desktop/` |
+| `desktop/` | Electron desktop app wrapping the Python backend (see `desktop/README.md`) |
 
 ## For AI Agents
 
@@ -66,5 +68,16 @@ A Python-based Douyin (TikTok China) batch downloader that fetches videos, galle
 ### Optional
 - `playwright` — browser automation for cookie fetching
 - `openai-whisper` — audio transcription
+- `fastapi` + `uvicorn` + `sse-starlette` — REST API / sidecar mode (required by `desktop/`)
+
+## `desktop/` subtree
+
+The Electron desktop wrapper. Rules for agents modifying this tree:
+
+- **Toolchain isolation:** zero Python code inside `desktop/`; zero Node/TS outside. The only crossing is `desktop/scripts/build-sidecar.sh` (PyInstaller).
+- **Backend contract:** Python stays functional as both a CLI (`python -m cli.main`) and a sidecar (`python -m cli.main --serve --serve-port 0`). Don't break either.
+- **Ready marker:** sidecar must emit exactly one `DOUYIN_SIDECAR_READY port=<int> pid=<int>` line on stdout before any other stdout output; Electron Main parses it to learn the OS-assigned port.
+- **Design spec:** `docs/superpowers/specs/2026-04-24-desktop-app-electron-design.md`
+- **Implementation plan:** `docs/superpowers/plans/2026-04-24-desktop-app.md`
 
 <!-- MANUAL: -->

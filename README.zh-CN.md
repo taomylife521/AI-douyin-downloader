@@ -9,6 +9,10 @@
 > 当前文档对应 **V2.0（main 分支）**。  
 > 如需使用旧版，请切回 **V1.0**：`git fetch --all && git switch V1.0`
 
+### 桌面版（MVP）
+
+跨平台桌面壳（macOS / Windows）在 [`desktop/`](./desktop/) 子目录下。通过 PyInstaller 把 Python 后端打包进 app，普通用户无需安装 Python，双击安装包即可使用。详见 [desktop/README.md](./desktop/README.md)。
+
 ## 功能概览
 
 ### 已支持

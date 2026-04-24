@@ -17,6 +17,12 @@ A practical Douyin downloader supporting videos, image-notes, collections, music
 > This document targets **V2.0 (`main` branch)**.  
 > For the legacy version, switch to **V1.0**: `git fetch --all && git switch V1.0`
 
+### Desktop App (MVP)
+
+A cross-platform desktop wrapper (macOS / Windows) lives under [`desktop/`](./desktop/). It
+bundles the Python backend as a PyInstaller sidecar so end users don't need to install
+Python. See [desktop/README.md](./desktop/README.md) for install, dev, and build instructions.
+
 ## Feature Overview
 
 ### Supported
