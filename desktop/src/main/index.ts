@@ -16,7 +16,7 @@ async function createMainWindow(): Promise<void> {
     height: 720,
     minWidth: 820,
     minHeight: 580,
-    title: 'Douyin Downloader',
+    title: 'DouyinDownloader',
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,

@@ -1,4 +1,4 @@
-# Douyin Downloader Desktop（Electron）
+# DouyinDownloader Desktop（Electron）
 
 跨平台桌面壳，内嵌 Python 后端（PyInstaller 打包），用户无需安装 Python。
 
@@ -13,11 +13,11 @@
 ### macOS
 
 1. 从 [Releases](https://github.com/jiji262/douyin-downloader/releases) 下载对应架构的 `.dmg`：
-   - Apple Silicon: `Douyin Downloader-X.Y.Z-arm64.dmg`
-   - Intel: `Douyin Downloader-X.Y.Z.dmg`
+   - Apple Silicon: `DouyinDownloader-X.Y.Z-arm64.dmg`
+   - Intel: `DouyinDownloader-X.Y.Z.dmg`
 2. 双击安装到 Applications。
 3. 未签名版本首次运行如提示"无法打开，可能损坏"：
-   - 终端执行：`xattr -cr "/Applications/Douyin Downloader.app"`
+   - 终端执行：`xattr -cr /Applications/DouyinDownloader.app`
    - 或"系统设置 → 隐私与安全 → 仍要打开"
 
 ### Windows
