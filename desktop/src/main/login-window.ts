@@ -5,6 +5,23 @@ const DOUYIN_URL = 'https://www.douyin.com/'
 const REQUIRED = ['sessionid_ss', 'ttwid', 'passport_csrf_token'] as const
 const PARTITION = 'persist:douyin-login'
 
+// Douyin's web frontend sniffs the User-Agent and refuses to render the
+// normal homepage / login modal when it sees `Electron/...`. Spoof a
+// recent macOS Chrome string so the page renders identically to a real
+// browser. Also used on Windows; the OS token is platform-specific.
+function chromeUserAgent(): string {
+  const platformToken =
+    process.platform === 'darwin'
+      ? 'Macintosh; Intel Mac OS X 10_15_7'
+      : process.platform === 'win32'
+        ? 'Windows NT 10.0; Win64; x64'
+        : 'X11; Linux x86_64'
+  return (
+    `Mozilla/5.0 (${platformToken}) AppleWebKit/537.36 ` +
+    `(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36`
+  )
+}
+
 type ECookie = {
   name: string
   value: string
@@ -59,19 +76,27 @@ export async function openLoginWindow(
   onCookiesReady: () => void,
 ): Promise<void> {
   const sess = session.fromPartition(PARTITION)
+  const ua = chromeUserAgent()
+  // The session-level UA covers all sub-resource requests Douyin fires
+  // off (XHR for /aweme/v1/web/login/, image CDNs, etc.). Setting it on
+  // webContents alone is not enough — those requests bypass the renderer.
+  sess.setUserAgent(ua)
+
   const win = new BrowserWindow({
-    width: 480,
-    height: 720,
+    width: 520,
+    height: 760,
     parent,
     modal: false,
     title: '登录抖音',
+    autoHideMenuBar: true,
     webPreferences: {
       partition: PARTITION,
       nodeIntegration: false,
       contextIsolation: true,
     },
   })
-  await win.loadURL(DOUYIN_URL)
+  win.webContents.setUserAgent(ua)
+  await win.loadURL(DOUYIN_URL, { userAgent: ua })
 
   let captured = false
   let inFlight: Promise<void> | null = null
