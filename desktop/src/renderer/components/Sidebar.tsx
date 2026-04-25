@@ -10,7 +10,7 @@ const items = [
 export default function Sidebar() {
   return (
     <nav className="w-44 flex-shrink-0 border-r border-slate-200 bg-white">
-      <div className="px-4 py-4 text-lg font-semibold">抖音下载器</div>
+      <div className="px-4 py-4 text-lg font-semibold">Douyin Downloader</div>
       <ul className="space-y-1 px-2">
         {items.map((it) => (
           <li key={it.to}>
